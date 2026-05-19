@@ -1,4 +1,4 @@
-# AutoresearchByMpark
+# Autoresearch by mpark 
 
 A general, stable **control plane** for agent-driven autoresearch: it plans,
 validates, runs, and analyses experiments across multiple target projects on
