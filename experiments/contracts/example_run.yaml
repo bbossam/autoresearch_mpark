@@ -1,0 +1,35 @@
+run_id: example_run_001
+target_project: example_project
+hypothesis: A small isolated implementation change can improve the primary metric.
+primary_metric: validation_score
+allowed_files:
+  - src/experimental/**
+  - configs/experiments/**
+forbidden_files:
+  - eval/**
+  - evaluation/**
+  - datasets/**
+  - data/**
+  - benchmarks/**
+  - shared/**
+  - common/**
+max_files_changed: 5
+max_lines_changed: 300
+agents:
+  - agent_name: PlannerAgent
+    may_write: false
+  - agent_name: ImplementerAgent
+    may_write: true
+    allowed_files:
+      - src/experimental/**
+  - agent_name: ReviewerAgent
+    may_write: false
+accept_rules:
+  - metric: validation_score
+    operator: gt
+    threshold: 0.0
+guardrail_metrics:
+  - metric: regression_count
+    operator: lte
+    threshold: 0
+

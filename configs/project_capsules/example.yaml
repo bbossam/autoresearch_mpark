@@ -1,0 +1,16 @@
+project_id: example_project
+name: Example Project
+description: Safe example target project capsule.
+repo_path: /tmp/example_project
+allowed_files:
+  - src/experimental/**
+  - configs/experiments/**
+forbidden_files:
+  - eval/**
+  - evaluation/**
+  - datasets/**
+  - data/**
+  - benchmarks/**
+  - shared/**
+  - common/**
+

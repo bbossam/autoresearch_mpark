@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autoresearch-by-mpark"
+version = "0.1.0"
+description = "Minimal control plane for safe agentic autoresearch runs."
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2",
+  "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8",
+]
+
+[project.scripts]
+autoresearch = "autoresearch.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
