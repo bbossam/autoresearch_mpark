@@ -8,6 +8,7 @@ session/infrastructure level. See AGENTS.md.
 
 from .analyst import AnalysisAgent
 from .base import Agent, AgentOutcome
+from .budget import BudgetAgent, BudgetView, estimate_difficulty
 from .context import ContextAgent, SessionSnapshot
 from .implementer import ImplementationAgent
 from .planner import PlanningAgent
@@ -32,4 +33,7 @@ __all__ = [
     "ResourceAgent",
     "ResourceRequest",
     "MachineState",
+    "BudgetAgent",
+    "BudgetView",
+    "estimate_difficulty",
 ]

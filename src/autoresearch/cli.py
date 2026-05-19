@@ -10,6 +10,8 @@ from pydantic import ValidationError
 from .agents import (
     AgentOutcome,
     AnalysisAgent,
+    BudgetAgent,
+    BudgetView,
     ContextAgent,
     PlanningAgent,
     ResearchAgent,
@@ -20,7 +22,9 @@ from .agents import (
     ReviewArtifacts,
     SessionSnapshot,
     ValidationAgent,
+    estimate_difficulty,
 )
+from .budget import TokenBudget, load_budget_config
 from .codex_client import CodexError, run_codex
 from .dashboard import serve
 from .diff_guard import audit_diff
@@ -31,7 +35,7 @@ from .mistakes import MistakeLedger
 from .models import ProjectCapsule, RunContract, RunResult
 from .registry import MachineRegistry, ProjectRegistry
 from .remote import probe_machine
-from .tokens import check_budget, clip_to_tokens
+from .tokens import check_budget, clip_to_tokens, estimate_tokens
 from .watchdog import run_with_watchdog
 
 
@@ -294,7 +298,7 @@ def _review_run_ids(args: argparse.Namespace) -> list[str]:
 
 
 def _gather_review_artifacts(
-    run_id: str, args: argparse.Namespace
+    run_id: str, args: argparse.Namespace, max_log_tokens: int
 ) -> ReviewArtifacts:
     logs = Path(args.logs_dir)
     target_project = ""
@@ -319,7 +323,7 @@ def _gather_review_artifacts(
     out_path = logs / f"{run_id}.out"
     if out_path.exists():
         raw_log = out_path.read_text(encoding="utf-8", errors="replace")
-        log_excerpt, _ = clip_to_tokens(raw_log, args.max_log_tokens)
+        log_excerpt, _ = clip_to_tokens(raw_log, max_log_tokens)
 
     report = ""
     report_path = Path(args.reports_dir) / f"{run_id}.md"
@@ -337,6 +341,31 @@ def _gather_review_artifacts(
     )
 
 
+def _review_log_budget(
+    run_id: str,
+    args: argparse.Namespace,
+    budget: TokenBudget | None,
+    config,
+) -> tuple[int, float | None]:
+    """Per-run max_log_tokens, scaled down by task difficulty and budget pacing."""
+    if budget is None or config is None:
+        return args.max_log_tokens, None
+    contract_path = Path(args.contracts_dir) / f"{run_id}.yaml"
+    if not contract_path.exists():
+        return args.max_log_tokens, None
+    try:
+        contract = _load_run(contract_path)
+    except (ValidationError, OSError, ValueError):
+        return args.max_log_tokens, None
+    difficulty = estimate_difficulty(contract)
+    view = BudgetView(
+        config.total_tokens, budget.consumed, budget.remaining(), budget.days_to_reset()
+    )
+    rec = BudgetAgent().recommend(view, difficulty)
+    capped = max(min(args.max_log_tokens, rec.data["recommended_tokens"] - 1000), 500)
+    return capped, difficulty
+
+
 def cmd_review(args: argparse.Namespace) -> int:
     if not args.run_id and not args.all:
         print("error: specify a run_id, or pass --all", file=sys.stderr)
@@ -347,12 +376,18 @@ def cmd_review(args: argparse.Namespace) -> int:
         _print_json({"ok": True, "count": 0, "reviews": [], "note": "nothing to review"})
         return 0
 
+    budget_config = load_budget_config(args.budget_config)
+    budget = TokenBudget(budget_config, args.budget_ledger) if budget_config else None
+
     reviews: list[dict] = []
     ledger = MistakeLedger(args.mistakes)
     recorded = False
     failures = 0
     for run_id in run_ids:
-        artifacts = _gather_review_artifacts(run_id, args)
+        max_log_tokens, difficulty = _review_log_budget(
+            run_id, args, budget, budget_config
+        )
+        artifacts = _gather_review_artifacts(run_id, args, max_log_tokens)
         prompt = agent.build_prompt(artifacts)
         check = check_budget(prompt, args.token_budget)
         if not check.fits:
@@ -391,6 +426,8 @@ def cmd_review(args: argparse.Namespace) -> int:
                 source="review",
             )
             recorded = True
+        if budget is not None:
+            budget.record(check.estimated)
         reviews.append(
             {
                 "run_id": run_id,
@@ -398,11 +435,14 @@ def cmd_review(args: argparse.Namespace) -> int:
                 "verdict": outcome.data["verdict"],
                 "interesting": outcome.data["interesting"],
                 "prompt_tokens": check.estimated,
+                "difficulty": difficulty,
                 "review_path": str(review_path),
             }
         )
     if recorded:
         ledger.save()
+    if budget is not None:
+        budget.save()
     _print_json({"ok": failures == 0, "count": len(reviews), "reviews": reviews})
     return 0 if failures == 0 else 2
 
@@ -440,6 +480,12 @@ def cmd_hypothesize(args: argparse.Namespace) -> int:
     except CodexError as exc:
         _print_json({"ok": False, "error": str(exc)})
         return 2
+
+    budget_config = load_budget_config(args.budget_config)
+    if budget_config is not None:
+        budget = TokenBudget(budget_config, args.budget_ledger)
+        budget.record(estimate_tokens(agent.build_prompt(context, args.count)))
+        budget.save()
 
     created = [str(write_idea(idea, out_dir / f"{idea.idea_id}.md")) for idea in ideas]
     _print_json(
@@ -585,6 +631,42 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_budget(args: argparse.Namespace) -> int:
+    config = load_budget_config(args.budget_config)
+    if config is None:
+        _print_json(
+            {
+                "ok": False,
+                "error": (
+                    f"no budget config at {args.budget_config} — copy "
+                    "configs/token_budget.example.yaml and set your numbers"
+                ),
+            }
+        )
+        return 2
+    budget = TokenBudget(config, args.budget_ledger)
+    view = BudgetView(
+        config.total_tokens, budget.consumed, budget.remaining(), budget.days_to_reset()
+    )
+    outcome = BudgetAgent().recommend(view, args.difficulty)
+    _print_json(
+        {
+            "ok": outcome.ok,
+            "total": view.total,
+            "consumed": view.consumed,
+            "remaining": view.remaining,
+            "days_to_reset": view.days_to_reset,
+            "daily_allowance": outcome.data["daily_allowance"],
+            "mode": outcome.data["mode"],
+            "difficulty": args.difficulty,
+            "recommended_tokens": outcome.data["recommended_tokens"],
+            "recommendation": outcome.summary,
+            "issues": outcome.issues,
+        }
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="autoresearch")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -651,6 +733,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-log-tokens", type=int, default=4000)
     p.add_argument("--token-budget", type=int, default=120000)
     p.add_argument("--mistakes", default="experiments/mistakes.json")
+    p.add_argument("--budget-config", default="configs/token_budget.yaml")
+    p.add_argument("--budget-ledger", default="experiments/token_budget.json")
     p.add_argument("--timeout", type=float, default=300.0)
     p.set_defaults(func=cmd_review)
 
@@ -662,6 +746,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", default="ideas")
     p.add_argument("--findings", default="knowledge/findings.md")
     p.add_argument("--mistakes", default="experiments/mistakes.json")
+    p.add_argument("--budget-config", default="configs/token_budget.yaml")
+    p.add_argument("--budget-ledger", default="experiments/token_budget.json")
     p.add_argument("--timeout", type=float, default=300.0)
     p.set_defaults(func=cmd_hypothesize)
 
@@ -695,6 +781,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--leaderboard", default="experiments/leaderboard.json")
     p.set_defaults(func=cmd_dashboard)
+
+    p = sub.add_parser("budget", help="BudgetAgent: token-budget status & pacing advice")
+    p.add_argument("--budget-config", default="configs/token_budget.yaml")
+    p.add_argument("--budget-ledger", default="experiments/token_budget.json")
+    p.add_argument(
+        "--difficulty", type=float, default=0.5,
+        help="task difficulty 0.0-1.0 to size the recommendation",
+    )
+    p.set_defaults(func=cmd_budget)
 
     return parser
 

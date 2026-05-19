@@ -1,4 +1,4 @@
-# Autoresearch by mpark 
+# Autoresearch by mpark
 
 A general, stable **control plane** for agent-driven autoresearch: it plans,
 validates, runs, and analyses experiments across multiple target projects on
@@ -71,6 +71,21 @@ override the invocation with `AUTORESEARCH_CODEX_CMD`.
 
 ## Safety
 
-- no LLM calls; `ImplementationAgent` performs no writes in v0
+- `ImplementationAgent` performs no writes to target repos in v0
+- LLM calls are confined to the Codex-backed Research and Review agents
 - only `ImplementerAgent` may hold `may_write=true` in a contract
 - evaluation code, datasets, and benchmarks are forbidden by default
+
+## Acknowledgements
+
+This project's design draws on prior work in agentic systems:
+
+- **[Karpathy's autoresearch](https://github.com/karpathy/autoresearch)** — the
+  hill-climbing experiment loop (keep a change only when it beats the best
+  result on a single metric), the fixed per-run time budget, and keeping diffs
+  small and reviewable. The leaderboard, the watchdog time budget, and the
+  AnalysisAgent's accept rule build on these ideas.
+- **[OpenHarness](https://github.com/HKUDS/OpenHarness)** — the harness pattern
+  of separating the *intelligence layer* (agents that decide) from the
+  *execution layer* (tools, processes, permissions). Here every agent is pure
+  and the CLI, watchdog, and `codex_client` are the only side-effecting layer.

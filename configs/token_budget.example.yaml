@@ -1,0 +1,5 @@
+# Codex token allowance. Copy to configs/token_budget.yaml and set your numbers.
+# The control plane tracks consumption in experiments/token_budget.json.
+total_tokens: 1000000
+period_days: 30
+period_start: 2026-05-01

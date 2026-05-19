@@ -10,7 +10,9 @@ experiments/reports/*.md
 experiments/reviews/*.md
 experiments/leaderboard.json
 experiments/mistakes.json
+experiments/token_budget.json
 experiments/context/session.md
+configs/token_budget.yaml
 !experiments/logs/.gitkeep
 !experiments/status/.gitkeep
 !experiments/reports/.gitkeep

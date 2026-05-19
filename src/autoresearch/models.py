@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
@@ -230,4 +230,14 @@ class MachineCapsule(BaseModel):
         if not value.strip():
             raise ValueError("must not be empty")
         return value
+
+
+class TokenBudgetConfig(BaseModel):
+    """User-set Codex token allowance and reset cadence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    total_tokens: int = Field(gt=0)
+    period_days: int = Field(default=30, gt=0)
+    period_start: date
 
